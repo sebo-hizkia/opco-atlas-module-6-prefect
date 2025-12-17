@@ -50,3 +50,10 @@ OPCO-ATLAS-Module-5-Template/
 ## Lancer en local (Docker)
 ```bash
 docker compose up --build
+```
+
+## Secrets GitHub
+
+Settings → Secrets and variables → Actions → New repository secret
+
+Créer un token Docker Hub : Account Settings -> Personnal access tokens
