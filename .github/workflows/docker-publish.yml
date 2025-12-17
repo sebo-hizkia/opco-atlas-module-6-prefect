@@ -32,7 +32,8 @@ jobs:
           context: ./backend
           push: true
           tags: |
-            sebohizkia/fastia-backend:latest
-            sebohizkia/fastia-backend:${{ env.GIT_SHA }}
+            sebo64/fastia-backend/fastia-backend:latest
+            sebo64/fastia-backend/fastia-backend:${{ env.GIT_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+#
