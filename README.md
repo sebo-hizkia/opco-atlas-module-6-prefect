@@ -18,8 +18,9 @@ Template minimaliste et reproductible :
 - `.github/workflows/test.yml` : CI
 
 ## Arborescence du projet
-
-.
+```
+OPCO-ATLAS-Module-5-Template/
+│
 ├── docker-compose.yml
 ├── README.md
 ├── frontend/
@@ -39,7 +40,7 @@ Template minimaliste et reproductible :
 └── .github/
     └── workflows/
         └── test.yml
-
+```
 
 ## Routes API
 - `GET /` : message de statut
