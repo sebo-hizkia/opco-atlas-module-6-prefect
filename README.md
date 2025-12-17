@@ -17,6 +17,30 @@ Template minimaliste et reproductible :
 - `docker-compose.yml` : lance uniquement frontend + backend
 - `.github/workflows/test.yml` : CI
 
+## Arborescence du projet
+
+.
+├── docker-compose.yml
+├── README.md
+├── frontend/
+│   ├── app.py
+│   ├── Dockerfile
+│   └── requirements.txt
+├── backend/
+│   ├── main.py
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   ├── modules/
+│   │   ├── __init__.py
+│   │   └── calcul.py
+│   └── tests/
+│       ├── __init__.py
+│       └── test_calcul.py
+└── .github/
+    └── workflows/
+        └── test.yml
+
+
 ## Routes API
 - `GET /` : message de statut
 - `GET /health` : healthcheck
