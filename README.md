@@ -51,6 +51,19 @@ OPCO-ATLAS-Module-5-Template/
 ```bash
 docker compose up --build
 ```
+## Accès aux services
+
+| Service             | Description                     | URL                                                            |
+| ------------------- | ------------------------------- | -------------------------------------------------------------- |
+| Frontend Streamlit  | Interface utilisateur           | [http://localhost:8501](http://localhost:8501)                 |
+| Backend FastAPI     | API principale                  | [http://localhost:8000](http://localhost:8000)                 |
+| Backend Healthcheck | Vérification de l’état de l’API | [http://localhost:8000/health](http://localhost:8000/health)   |
+| Backend Metrics     | Métriques Prometheus            | [http://localhost:8000/metrics](http://localhost:8000/metrics) |
+
+## Arrêt
+```bash
+docker compose down
+```
 
 ## Secrets GitHub
 
