@@ -1,72 +1,55 @@
-# FastIA – Template modulaire (Frontend + Backend) avec Docker & CI
+# FastIA — Monitoring de dérive avec Prefect (serve + worker + UI)
 
-## Objectif
-Template minimaliste et reproductible :
-- Frontend Streamlit : envoie un entier
-- Backend FastAPI : valide l'entrée avec Pydantic et renvoie le carré
-- Loguru : logs lisibles dans les deux services
-- Pytest : test unitaire sur la logique métier
-- GitHub Actions : exécute les tests à chaque push / PR
-- Docker & Docker Compose : environnement isolé
+Objectif : simuler un pipeline de supervision IA orchestré par Prefect :
+- Exécution automatique toutes les X secondes (via `flow.serve(interval=X)`)
+- Détection de dérive aléatoire
+- Déclenchement conditionnel d’un "réentraînement"
+- Tasks avec retries + retry_delay_seconds
+- Logs visibles dans l’UI Prefect (http://localhost:4200)
+- Exécutable en local OU dans Docker sans modifier le code Python
 
-## Architecture
-- `frontend/app.py` : UI Streamlit + appel REST
-- `backend/main.py` : API FastAPI (3 routes)
-- `backend/modules/calcul.py` : logique métier (calcul du carré)
-- `backend/tests/test_calcul.py` : tests pytest
-- `docker-compose.yml` : lance uniquement frontend + backend
-- `.github/workflows/test.yml` : CI
+## Prérequis
+- Docker + Docker Compose
 
-## Arborescence du projet
-```
-OPCO-ATLAS-Module-5-Template/
-│
-├── docker-compose.yml
-├── README.md
-├── frontend/
-│   ├── app.py
-│   ├── Dockerfile
-│   └── requirements.txt
-├── backend/
-│   ├── main.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   ├── modules/
-│   │   ├── __init__.py
-│   │   └── calcul.py
-│   └── tests/
-│       ├── __init__.py
-│       └── test_calcul.py
-└── .github/
-    └── workflows/
-        └── test.yml
-```
+---
 
-## Routes API
-- `GET /` : message de statut
-- `GET /health` : healthcheck
-- `POST /calcul` : body JSON `{ "n": 5 }` → `{ "n": 5, "carre": 25 }`
+## Lancer avec Docker Compose
+Depuis la racine :
 
-## Lancer en local (Docker)
 ```bash
 docker compose up --build
-```
-## Accès aux services
+````
 
-| Service             | Description                     | URL                                                            |
-| ------------------- | ------------------------------- | -------------------------------------------------------------- |
-| Frontend Streamlit  | Interface utilisateur           | [http://localhost:8501](http://localhost:8501)                 |
-| Backend FastAPI     | API principale                  | [http://localhost:8000](http://localhost:8000)                 |
-| Backend Healthcheck | Vérification de l’état de l’API | [http://localhost:8000/health](http://localhost:8000/health)   |
-| Backend Metrics     | Métriques Prometheus            | [http://localhost:8000/metrics](http://localhost:8000/metrics) |
+Puis ouvrir :
 
-## Arrêt
-```bash
-docker compose down
-```
+* UI Prefect : [http://localhost:4200](http://localhost:4200)
 
-## Secrets GitHub
+### Ce que vous devez voir dans l’UI
 
-Settings → Secrets and variables → Actions → New repository secret
+* Un flow `fastia-drift-monitoring`
+* Des runs qui apparaissent toutes les `SERVE_INTERVAL_SECONDS` secondes
+* Des logs clairs avec deux cas :
 
-Créer un token Docker Hub : Account Settings -> Personnal access tokens
+  * `OK: pas de dérive...`
+  * `RÉENTRAÎNEMENT déclenché...` puis `RÉENTRAÎNEMENT terminé...`
+* En cas d’échec simulé de retrain, vous verrez les retries (et leur délai)
+
+---
+
+## Variables d’environnement
+
+* `SERVE_INTERVAL_SECONDS` (défaut: 10)
+* `DRIFT_THRESHOLD` (défaut: 0.5)
+* `PREFECT_API_URL` (nécessaire pour pointer vers l’API Prefect)
+* `PREFECT_WORK_POOL` (défaut: local-pool)
+
+---
+
+## Notes d’implémentation
+
+* La dérive est simulée par `random.random()`
+* Le retrain est déclenché si `drift_score < DRIFT_THRESHOLD`
+* `retrain_model` a volontairement une probabilité d’échec pour démontrer `retries` et `retry_delay_seconds`
+
+
+[1]: https://docs.prefect.io/v3/how-to-guides/self-hosted/docker-compose "How to run the Prefect Server via Docker Compose"

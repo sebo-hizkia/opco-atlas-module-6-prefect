@@ -1,12 +1,71 @@
-services:
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
+version: "3.9"
 
-  frontend:
-    build: ./frontend
+services:
+  # ===============================
+  # BASE DE DONNÉES PREFECT
+  # ===============================
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # ===============================
+  # PREFECT SERVER + UI
+  # ===============================
+  prefect-server:
+    image: prefecthq/prefect:3-python3.11
+    container_name: prefect-server
+    command: prefect server start --host 0.0.0.0
+    env_file:
+      - .env
+    environment:
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      PREFECT_UI_API_URL: ${PREFECT_UI_API_URL}
     ports:
-      - "8501:8501"
+      - "4200:4200"
     depends_on:
-      - backend
+      - postgres
+    restart: unless-stopped
+
+  # ===============================
+  # PREFECT WORKER
+  # ===============================
+  prefect-worker:
+    image: prefecthq/prefect:3-python3.11
+    container_name: prefect-worker
+    env_file:
+      - .env
+    depends_on:
+      - prefect-server
+    command: >
+      bash -lc "
+      prefect work-pool create ${PREFECT_WORK_POOL} -t process || true &&
+      prefect worker start -p ${PREFECT_WORK_POOL}
+      "
+    restart: unless-stopped
+
+  # ===============================
+  # PIPELINE PREFECT (FLOW)
+  # ===============================
+  pipeline:
+    build:
+      context: ./prefect_pipeline
+    container_name: pipeline
+    env_file:
+      - .env
+    depends_on:
+      - prefect-worker
+    restart: unless-stopped
+
+
+# ===============================
+# VOLUMES
+# ===============================
+volumes:
+  pgdata:
