@@ -2,7 +2,8 @@ version: "3.9"
 
 services:
   # ===============================
-  # BASE DE DONNÉES PREFECT
+  # BASE DE DONNÉES POSTGRESQL
+  # (Prefect + MNIST)
   # ===============================
   postgres:
     image: postgres:16
@@ -10,9 +11,10 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_DB: ${POSTGRES_DB}   # base Prefect
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./db/init-mnist.sql:/docker-entrypoint-initdb.d/init-mnist.sql
     restart: unless-stopped
 
   # ===============================
@@ -63,6 +65,28 @@ services:
       - prefect-worker
     restart: unless-stopped
 
+  # ===============================
+  # MNIST APPLICATION (Brief 2)
+  # ===============================
+  mnist-backend:
+    build: ./backend
+    container_name: mnist-backend
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mnist
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  mnist-frontend:
+    build: ./frontend
+    container_name: mnist-frontend
+    depends_on:
+      - mnist-backend
+    ports:
+      - "8501:8501"
+    restart: unless-stopped
 
 # ===============================
 # VOLUMES

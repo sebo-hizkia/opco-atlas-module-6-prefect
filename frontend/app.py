@@ -1,24 +1,54 @@
 import streamlit as st
+import numpy as np
 import requests
-from loguru import logger
+import io
+from PIL import Image
+from streamlit_drawable_canvas import st_canvas
 
-st.set_page_config(page_title="FastIA Template Frontend", page_icon="🧮")
+st.title("✏️ MNIST – Test & Feedback")
 
-st.title("🧮 Carré d'un entier")
-st.write("Entrez un entier, il est envoyé au backend qui retourne son carré.")
+canvas = st_canvas(
+    fill_color="white",
+    stroke_width=12,
+    stroke_color="black",
+    background_color="white",
+    width=280,
+    height=280,
+    drawing_mode="freedraw",
+    key="canvas",
+)
 
-API_URL = "http://backend:8000/calcul"
+if st.button("🔍 Prédire"):
+    if canvas.image_data is not None:
+        img = Image.fromarray(canvas.image_data.astype("uint8")).convert("L")
+        img = img.resize((28, 28))
 
-n = st.number_input("Entier", value=2, step=1)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
 
-if st.button("Calculer"):
-    logger.info(f"Envoi vers API: n={n}")
-    try:
-        resp = requests.post(API_URL, json={"n": int(n)}, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        st.success(f"{data['n']}² = {data['carre']}")
-        logger.info(f"Réponse API: {data}")
-    except Exception as e:
-        logger.exception("Erreur appel API")
-        st.error(f"Erreur: {e}")
+        response = requests.post(
+            "http://backend:8000/predict",
+            files={"file": ("digit.png", buf, "image/png")}
+        )
+
+        if response.ok:
+            data = response.json()
+            st.session_state["prediction"] = data
+            st.success(f"Prédiction : {data['predicted_label']} ({data['confidence']:.2f})")
+
+if "prediction" in st.session_state:
+    st.subheader("❌ Mauvaise prédiction ?")
+    true_label = st.selectbox("Correction", list(range(10)))
+    if st.button("Envoyer correction"):
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+
+        requests.post(
+            "http://backend:8000/correct",
+            data={"prediction_id": st.session_state["prediction"]["prediction_id"],
+                  "true_label": true_label},
+            files={"file": ("digit.png", buf, "image/png")}
+        )
+        st.success("Correction enregistrée")
