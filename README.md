@@ -31,10 +31,24 @@ docker compose up --build
 - Surveillez le pipeline de détection de dérive
 - Voir les entraînements automatiques
 
+### MLflow UI (tracking des entraînements)
+
+👉 http://localhost:5000
+
+Permet de :
+
+- Visualiser tous les entraînements du modèle
+
+- Comparer les métriques (accuracy, loss, etc.)
+
+- Consulter les paramètres d’entraînement
+
+- Télécharger les artefacts (modèles, courbes)
+
 ### PostgreSQL : Port 5436 (mappé depuis 5432)
-- Base de données Prefect : prefect_db
+- Base de données Prefect : prefect
 - Base de données MNIST : mnist
-- Connexion : docker exec -it postgres psql -U prefect
+- Connexion base de données mnist : docker exec -it postgres psql -U app_user -d mnist
 
 ---
 

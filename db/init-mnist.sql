@@ -1,1 +1,2 @@
 CREATE DATABASE mnist;
+CREATE DATABASE mlflow;

@@ -1,105 +1,99 @@
-version: "3.9"
-
 services:
-  # ===============================
-  # BASE DE DONNÉES POSTGRESQL
-  # (Prefect + MNIST)
-  # ===============================
   postgres:
     image: postgres:16
     container_name: postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}   # base Prefect
+      POSTGRES_DB: ${PREFECT_DB_NAME}   # base par défaut
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init-mnist.sql:/docker-entrypoint-initdb.d/init-mnist.sql
-    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${PREFECT_DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 10s
+    restart: unless-stopped
 
-  # ===============================
-  # PREFECT SERVER + UI
-  # ===============================
+  mlflow:
+    build: ./mlflow
+    container_name: mlflow
+    command: mlflow server --backend-store-uri postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${MLFLOW_DB_NAME} --default-artifact-root /mlruns --host 0.0.0.0 --allowed-hosts '*' --serve-artifacts
+    volumes:
+      - mlruns:/mlruns
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   prefect-server:
     image: prefecthq/prefect:3-python3.11
     container_name: prefect-server
     command: prefect server start --host 0.0.0.0
-    env_file:
-      - .env
     environment:
-      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      PREFECT_API_DATABASE_CONNECTION_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${PREFECT_DB_NAME}
       PREFECT_UI_API_URL: ${PREFECT_UI_API_URL}
     ports:
       - "4200:4200"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
-  # ===============================
-  # PREFECT WORKER
-  # ===============================
   prefect-worker:
     image: prefecthq/prefect:3-python3.11
     container_name: prefect-worker
-    env_file:
-      - .env
+    environment:
+      PREFECT_API_URL: http://prefect-server:4200/api
     depends_on:
       - prefect-server
-    command: >
-      bash -lc "
-      prefect work-pool create ${PREFECT_WORK_POOL} -t process || true &&
-      prefect worker start -p ${PREFECT_WORK_POOL}
-      "
+    command: bash -lc "prefect work-pool create ${PREFECT_WORK_POOL} -t process || true && prefect worker start -p ${PREFECT_WORK_POOL}"
     restart: unless-stopped
 
-  # ===============================
-  # PIPELINE PREFECT (FLOW)
-  # ===============================
   pipeline:
-    build:
-      context: ./prefect_pipeline
+    build: ./prefect_pipeline
     container_name: pipeline
-    env_file:
-      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${MNIST_DB_NAME}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      PREFECT_API_URL: http://prefect-server:4200/api   # 🔥 AJOUT ICI
+    volumes:
+      - models:/models
     depends_on:
+      - prefect-server
       - prefect-worker
+      - mlflow
     restart: unless-stopped
 
-  # ===============================
-  # MNIST APPLICATION (Brief 2)
-  # ===============================
   mnist-backend:
     build: ./backend
     container_name: mnist-backend
-    depends_on:
-      postgres:
-        condition: service_healthy  # Attendre que PostgreSQL soit healthy
-    restart: on-failure  # Redémarrer si échec
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mnist
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${MNIST_DB_NAME}
+      MODEL_PATH: /models/mnist_latest.h5
+      MODEL_VERSION: latest
+    volumes:
+      - models:/models
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   mnist-frontend:
     build: ./frontend
     container_name: mnist-frontend
-    depends_on:
-      - mnist-backend
-    env_file:
-      - .env  # Charge toutes les variables du .env
     ports:
       - "8501:8501"
+    depends_on:
+      - mnist-backend
     restart: unless-stopped
 
-# ===============================
-# VOLUMES
-# ===============================
 volumes:
   pgdata:
+  models:
+  mlruns:

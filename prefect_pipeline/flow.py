@@ -1,115 +1,218 @@
 import os
-import httpx
-import random
 import time
+import io
+from typing import Dict
+
+import numpy as np
+from PIL import Image
+from sqlalchemy import create_engine, text
+
+import mlflow
+import mlflow.tensorflow
+
 from prefect import flow, task, get_run_logger
 
-# Intervalle (secondes) pour `serve(interval=...)`
-SERVE_INTERVAL_SECONDS = int(os.getenv("SERVE_INTERVAL_SECONDS", "10"))
+# =====================================================
+# CONFIG
+# =====================================================
+SERVE_INTERVAL_SECONDS = int(os.getenv("SERVE_INTERVAL_SECONDS", "3600"))
 
-# Seuil de dérive
-DRIFT_THRESHOLD = float(os.getenv("DRIFT_THRESHOLD", "0.5"))
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres:postgres@postgres:5432/mnist"
+)
 
-def wait_for_prefect_api(api_url: str, timeout: int = 60):
-    """
-    Permet d'attendre que la base de données et l'API prefect soient démarrées le monitoring
-    """
-    start = time.time()
-    while True:
-        try:
-            r = httpx.get(f"{api_url}/health")
-            if r.status_code == 200:
-                print("✅ Prefect API disponible")
-                return
-        except Exception:
-            pass
+MIN_CORRECTIONS = int(os.getenv("MIN_CORRECTIONS", "10"))
+ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "0.90"))
 
-        if time.time() - start > timeout:
-            raise RuntimeError("❌ Prefect API indisponible après attente")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "file:/mlruns")
+MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "mnist-production")
 
-        print("⏳ Attente du serveur Prefect...")
-        time.sleep(2)
+MODEL_OUTPUT_PATH = "/models/mnist_latest.h5"
 
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
-@task(retries=2, retry_delay_seconds=5)
-def fetch_new_batch() -> list[float]:
-    """
-    Simule l'arrivée d'un nouveau batch de données (ex: métriques / features).
-    """
+# =====================================================
+# TASKS
+# =====================================================
+
+@task
+def compute_production_metrics() -> Dict[str, float]:
     logger = get_run_logger()
-    batch = [random.random() for _ in range(10)]
-    logger.info(f"Batch reçu (10 valeurs). Aperçu={batch[:3]}")
-    return batch
+    engine = create_engine(DATABASE_URL)
+
+    with engine.connect() as conn:
+        total_predictions = conn.execute(
+            text("SELECT COUNT(*) FROM prediction_log")
+        ).scalar() or 0
+
+        total_corrections = conn.execute(
+            text("SELECT COUNT(*) FROM feedback")
+        ).scalar() or 0
+
+    accuracy = (
+        1 - total_corrections / total_predictions
+        if total_predictions > 0 else 1.0
+    )
+
+    metrics = {
+        "total_predictions": total_predictions,
+        "total_corrections": total_corrections,
+        "production_accuracy": accuracy,
+    }
+
+    logger.info(f"Métriques production : {metrics}")
+    return metrics
 
 
 @task
-def detect_drift(batch: list[float]) -> float:
-    """
-    Simule une métrique de dérive via un tirage aléatoire.
-    (On pourrait aussi dériver depuis le batch ; ici c'est volontairement symbolique.)
-    """
+def should_retrain(metrics: Dict[str, float]) -> bool:
     logger = get_run_logger()
-    drift_score = random.random()
-    logger.info(f"Score de dérive simulé = {drift_score:.3f}")
-    return drift_score
 
+    decision = (
+        metrics["total_corrections"] >= MIN_CORRECTIONS
+        or metrics["production_accuracy"] < ACCURACY_THRESHOLD
+    )
 
-@task(retries=3, retry_delay_seconds=3)
-def retrain_model(drift_score: float) -> str:
-    """
-    Simule un réentraînement avec une chance d'échec pour démontrer retries + logs.
-    """
-    logger = get_run_logger()
     logger.warning(
-        f"RÉENTRAÎNEMENT déclenché (drift_score={drift_score:.3f} < threshold={DRIFT_THRESHOLD})."
+        f"Retrain={decision} | "
+        f"corrections={metrics['total_corrections']} | "
+        f"accuracy={metrics['production_accuracy']:.3f}"
     )
-
-    # Simule un job de retrain
-    time.sleep(1.5)
-
-    # Simule un échec aléatoire pour voir les retries dans l'UI
-    if random.random() < 0.3:
-        raise RuntimeError("Échec simulé du retrain (pour tester retries).")
-
-    model_version = f"model-{int(time.time())}"
-    logger.warning(f"RÉENTRAÎNEMENT terminé. Nouvelle version: {model_version}")
-    return model_version
+    return decision
 
 
-@task
-def log_ok(drift_score: float) -> None:
+@task(retries=2, retry_delay_seconds=10)
+def retrain_model(metrics: Dict[str, float]) -> str:
     logger = get_run_logger()
-    logger.info(
-        f"OK: pas de dérive (drift_score={drift_score:.3f} >= threshold={DRIFT_THRESHOLD})."
+    logger.warning("🔁 DÉMARRAGE DU RÉENTRAÎNEMENT (MLflow)")
+
+    from tensorflow.keras.datasets import mnist
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import (
+        Conv2D, MaxPooling2D, Flatten, Dense, Dropout
     )
+    from tensorflow.keras.optimizers import Adam
+
+    # -------------------------------------------------
+    # MLflow Run
+    # -------------------------------------------------
+    with mlflow.start_run(run_name=f"retrain-{int(time.time())}"):
+
+        # Log paramètres
+        mlflow.log_param("epochs", 3)
+        mlflow.log_param("batch_size", 64)
+        mlflow.log_param("learning_rate", 1e-3)
+
+        # -------------------------------------------------
+        # Dataset MNIST
+        # -------------------------------------------------
+        (x_train, y_train), _ = mnist.load_data()
+        x_train = x_train / 255.0
+        x_train = x_train[..., np.newaxis]
+
+        # -------------------------------------------------
+        # Feedback utilisateur
+        # -------------------------------------------------
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT image, true_label FROM feedback")
+            ).fetchall()
+
+        if rows:
+            imgs, labels = [], []
+            for img_bytes, label in rows:
+                img = Image.open(io.BytesIO(img_bytes)).convert("L")
+                imgs.append(np.array(img) / 255.0)
+                labels.append(label)
+
+            x_user = np.array(imgs)[..., np.newaxis]
+            y_user = np.array(labels)
+
+            x_train = np.concatenate([x_train, x_user])
+            y_train = np.concatenate([y_train, y_user])
+
+            mlflow.log_metric("user_samples", len(x_user))
+        else:
+            mlflow.log_metric("user_samples", 0)
+
+        # -------------------------------------------------
+        # Modèle
+        # -------------------------------------------------
+        model = Sequential([
+            Conv2D(32, 3, activation="relu", input_shape=(28, 28, 1)),
+            MaxPooling2D(),
+            Conv2D(64, 3, activation="relu"),
+            MaxPooling2D(),
+            Flatten(),
+            Dense(128, activation="relu"),
+            Dropout(0.3),
+            Dense(10, activation="softmax"),
+        ])
+
+        model.compile(
+            optimizer=Adam(learning_rate=1e-3),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"],
+        )
+
+        history = model.fit(
+            x_train,
+            y_train,
+            epochs=3,
+            batch_size=64,
+            verbose=1,
+        )
+
+        final_accuracy = history.history["accuracy"][-1]
+        mlflow.log_metric("train_accuracy", final_accuracy)
+
+        # -------------------------------------------------
+        # Sauvegarde + artefact MLflow
+        # -------------------------------------------------
+        os.makedirs("/models", exist_ok=True)
+        model.save(MODEL_OUTPUT_PATH)
+
+        mlflow.tensorflow.log_model(
+            model,
+            artifact_path="model",
+            registered_model_name="mnist-cnn"
+        )
+
+        # Log métriques production
+        for k, v in metrics.items():
+            mlflow.log_metric(f"prod_{k}", v)
+
+        logger.warning(
+            f"✅ RÉENTRAÎNEMENT TERMINÉ | accuracy={final_accuracy:.3f}"
+        )
+
+        return mlflow.active_run().info.run_id
 
 
-@flow(name="fastia-drift-monitoring")
-def monitoring_flow() -> None:
+# =====================================================
+# FLOW
+# =====================================================
+
+@flow(name="mnist-monitoring-mlflow")
+def monitoring_flow():
     logger = get_run_logger()
-    logger.info("Démarrage du cycle de monitoring...")
+    logger.info("🚀 Monitoring MNIST + MLflow")
 
-    batch = fetch_new_batch()
-    drift_score = detect_drift(batch)
+    metrics = compute_production_metrics()
 
-    if drift_score < DRIFT_THRESHOLD:
-        _ = retrain_model(drift_score)
+    if should_retrain(metrics):
+        retrain_model(metrics)
     else:
-        log_ok(drift_score)
+        logger.info("✅ Modèle OK – pas de retrain")
 
-    logger.info("Fin du cycle de monitoring.")
-
+    logger.info("🏁 Fin du cycle")
 
 if __name__ == "__main__":
-    # Serve crée une "deployment-like" et déclenche des runs à intervalle fixe.
-    # Important: on précise le work pool pour exécuter via le worker docker.
-
-    # On attend que l'API soit démarrée
-    api_url = os.getenv("PREFECT_API_URL")
-    wait_for_prefect_api(api_url)
-
     monitoring_flow.serve(
-        name="fastia-drift-monitoring-serve",
+        name="mnist-monitoring-mlflow",
         interval=SERVE_INTERVAL_SECONDS,
-        tags=["fastia", "monitoring", "drift"],
+        tags=["mnist", "mlflow", "retraining"],
     )
