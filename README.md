@@ -1,12 +1,7 @@
-# FastIA — Monitoring de dérive avec Prefect (serve + worker + UI)
+# Application MNIST avec boucle de feedback utilisateur
 
-Objectif : simuler un pipeline de supervision IA orchestré par Prefect :
-- Exécution automatique toutes les X secondes (via `flow.serve(interval=X)`)
-- Détection de dérive aléatoire
-- Déclenchement conditionnel d’un "réentraînement"
-- Tasks avec retries + retry_delay_seconds
-- Logs visibles dans l’UI Prefect (http://localhost:4200)
-- Exécutable en local OU dans Docker sans modifier le code Python
+Ce projet met en œuvre une application complète de test en conditions réelles d’un modèle de classification MNIST, intégrant une boucle de feedback humaine.
+L’objectif est de collecter des données corrigées en production afin d’améliorer progressivement le modèle via des cycles de réentraînement automatisés (étapes suivantes du projet).
 
 ## Prérequis
 - Docker + Docker Compose
@@ -20,36 +15,61 @@ Depuis la racine :
 docker compose up --build
 ````
 
-Puis ouvrir :
+## Accès aux différentes interfaces :
 
-* UI Prefect : [http://localhost:4200](http://localhost:4200)
+### Frontend MNIST (interface utilisateur) : http://localhost:8501
 
-### Ce que vous devez voir dans l’UI
+- Vous pouvez dessiner des chiffres et obtenir des prédictions
+- Envoyer des corrections si nécessaire
 
-* Un flow `fastia-drift-monitoring`
-* Des runs qui apparaissent toutes les `SERVE_INTERVAL_SECONDS` secondes
-* Des logs clairs avec deux cas :
+### Backend API (FastAPI) : http://localhost:8000/docs
+- Documentation interactive de l'API
+- Testez les endpoints /predict et /correct
 
-  * `OK: pas de dérive...`
-  * `RÉENTRAÎNEMENT déclenché...` puis `RÉENTRAÎNEMENT terminé...`
-* En cas d’échec simulé de retrain, vous verrez les retries (et leur délai)
+### Prefect UI (monitoring MLOps) : http://localhost:4200
+- Visualisez les flows exécutés
+- Surveillez le pipeline de détection de dérive
+- Voir les entraînements automatiques
 
----
-
-## Variables d’environnement
-
-* `SERVE_INTERVAL_SECONDS` (défaut: 10)
-* `DRIFT_THRESHOLD` (défaut: 0.5)
-* `PREFECT_API_URL` (nécessaire pour pointer vers l’API Prefect)
-* `PREFECT_WORK_POOL` (défaut: local-pool)
+### PostgreSQL : Port 5436 (mappé depuis 5432)
+- Base de données Prefect : prefect_db
+- Base de données MNIST : mnist
+- Connexion : docker exec -it postgres psql -U prefect
 
 ---
 
-## Notes d’implémentation
+## Utilisation
+1. Tester la classification MNIST
 
-* La dérive est simulée par `random.random()`
-* Le retrain est déclenché si `drift_score < DRIFT_THRESHOLD`
-* `retrain_model` a volontairement une probabilité d’échec pour démontrer `retries` et `retry_delay_seconds`
+    1. Ouvrir http://localhost:8501
 
+    2. Dessiner un chiffre dans la zone de dessin
 
-[1]: https://docs.prefect.io/v3/how-to-guides/self-hosted/docker-compose "How to run the Prefect Server via Docker Compose"
+    3. Cliquer sur "🔍 Prédire"
+
+    4. Vérifier la prédiction affichée
+
+2. Améliorer le modèle
+
+    1. Si la prédiction est incorrecte :
+      - Sélectionner le chiffre correct dans la liste déroulante
+      - Cliquer sur "Envoyer correction"
+
+    2. Le feedback est stocké en base pour améliorations futures
+
+3. Monitorer le pipeline
+
+    1. Ouvrir http://localhost:4200
+
+    2. Naviguer vers "Deployments" → "fastia-drift-monitoring"
+
+    3. Observer :
+
+        - Les runs automatiques toutes les 30 secondes
+
+        - Les logs de détection de dérive
+
+        - Les réentraînements déclenchés
+
+        - Les retries en cas d'échec simulé
+

@@ -1,14 +1,14 @@
-from fastapi import FastAPI, UploadFile, File, Depends
+from fastapi import FastAPI, UploadFile, File, Depends, Form
 from sqlalchemy.orm import Session
 import uuid
 import numpy as np
 from PIL import Image
 import io
 
-from .database import SessionLocal, engine
-from .models import Base, PredictionLog, Feedback
-from .schemas import PredictionResponse, CorrectionRequest
-from .inference import predict_digit, MODEL_VERSION
+from database import SessionLocal, engine
+from models import Base, PredictionLog, Feedback
+from schemas import PredictionResponse
+from inference import predict_digit, MODEL_VERSION
 
 Base.metadata.create_all(bind=engine)
 
@@ -48,12 +48,17 @@ async def predict(file: UploadFile = File(...), db: Session = Depends(get_db)):
 
 
 @app.post("/correct")
-async def correct(req: CorrectionRequest, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def correct(
+    prediction_id: str = Form(...),  # ← Utiliser Form() au lieu de Pydantic model
+    true_label: int = Form(...),     # ← Utiliser Form() pour les champs simples
+    file: UploadFile = File(...),    # ← File() pour le fichier
+    db: Session = Depends(get_db)
+):
     image_bytes = await file.read()
 
     feedback = Feedback(
-        prediction_id=req.prediction_id,
-        true_label=req.true_label,
+        prediction_id=prediction_id,
+        true_label=true_label,
         predicted_label=None,
         model_version=MODEL_VERSION,
         image=image_bytes

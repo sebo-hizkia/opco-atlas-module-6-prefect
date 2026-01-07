@@ -16,6 +16,12 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./db/init-mnist.sql:/docker-entrypoint-initdb.d/init-mnist.sql
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # ===============================
   # PREFECT SERVER + UI
@@ -72,7 +78,9 @@ services:
     build: ./backend
     container_name: mnist-backend
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy  # Attendre que PostgreSQL soit healthy
+    restart: on-failure  # Redémarrer si échec
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/mnist
     ports:
@@ -84,6 +92,8 @@ services:
     container_name: mnist-frontend
     depends_on:
       - mnist-backend
+    env_file:
+      - .env  # Charge toutes les variables du .env
     ports:
       - "8501:8501"
     restart: unless-stopped

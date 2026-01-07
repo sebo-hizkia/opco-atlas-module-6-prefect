@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, Float, Text, TIMESTAMP, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
-from .database import Base
+from database import Base
 
 class PredictionLog(Base):
     __tablename__ = "prediction_log"
